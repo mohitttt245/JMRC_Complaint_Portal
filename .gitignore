@@ -1,0 +1,64 @@
+# Jaipur Metro Complaint Portal - .gitignore
+
+# Sensitive Configuration Files
+config/database.php
+.env
+.env.local
+.env.production
+
+# Upload Directory (contains user uploaded files)
+uploads/*
+!uploads/.gitkeep
+
+# PHP
+*.log
+*.tmp
+*.cache
+vendor/
+composer.lock
+.phpunit.result.cache
+
+# IDE Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup Files
+*.bak
+*.backup
+*.sql.backup
+
+# Temporary Files
+tmp/
+temp/
+cache/
+
+# Log Files
+*.log
+logs/
+error.log
+access.log
+
+# Session Files
+sessions/
+
+# Compiled CSS/JS (if using build tools)
+node_modules/
+dist/
+build/
+
+# Package managers
+composer.phar
+package-lock.json
+yarn.lock
