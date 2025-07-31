@@ -16,30 +16,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $newStatus = sanitizeInput($_POST['status']);
         $adminResponse = sanitizeInput($_POST['admin_response']);
         
-        try {
-            $db = getDB();
-            $stmt = $db->prepare("UPDATE complaints SET status = ?, admin_response = ?, updated_at = NOW() WHERE id = ?");
-            
-            if ($stmt->execute([$newStatus, $adminResponse, $complaintId])) {
-                $success = "Complaint status updated successfully!";
-            } else {
-                $error = "Failed to update complaint status.";
+        // Validate status
+        $validStatuses = ['Pending', 'In Progress', 'Resolved', 'Rejected'];
+        if (!in_array($newStatus, $validStatuses)) {
+            $error = "Invalid status selected.";
+        } elseif ($complaintId <= 0) {
+            $error = "Invalid complaint ID.";
+        } else {
+            try {
+                $db = getDB();
+                
+                // Check if complaint exists
+                $checkStmt = $db->prepare("SELECT id FROM complaints WHERE id = ?");
+                $checkStmt->execute([$complaintId]);
+                
+                if ($checkStmt->rowCount() === 0) {
+                    $error = "Complaint not found.";
+                } else {
+                    // Update complaint with proper timestamp handling
+                    $updateStmt = $db->prepare("UPDATE complaints SET status = ?, admin_response = ?, updated_at = NOW() WHERE id = ?");
+                    
+                    if ($updateStmt->execute([$newStatus, $adminResponse, $complaintId])) {
+                        $success = "Complaint #$complaintId status updated successfully to '$newStatus'!";
+                        
+                        // If resolved, set resolved_at timestamp
+                        if ($newStatus === 'Resolved') {
+                            $resolvedStmt = $db->prepare("UPDATE complaints SET resolved_at = NOW() WHERE id = ?");
+                            $resolvedStmt->execute([$complaintId]);
+                        }
+                    } else {
+                        $error = "Failed to update complaint status. Please try again.";
+                    }
+                }
+            } catch (Exception $e) {
+                $error = "Database error occurred while updating complaint.";
+                error_log("Complaint update error: " . $e->getMessage());
             }
-        } catch (Exception $e) {
-            $error = "Failed to update complaint status.";
         }
     } elseif ($_POST['action'] === 'delete') {
-        try {
-            $db = getDB();
-            $stmt = $db->prepare("DELETE FROM complaints WHERE id = ?");
-            
-            if ($stmt->execute([$complaintId])) {
-                $success = "Complaint deleted successfully!";
-            } else {
-                $error = "Failed to delete complaint.";
+        if ($complaintId <= 0) {
+            $error = "Invalid complaint ID.";
+        } else {
+            try {
+                $db = getDB();
+                
+                // Check if complaint exists
+                $checkStmt = $db->prepare("SELECT id FROM complaints WHERE id = ?");
+                $checkStmt->execute([$complaintId]);
+                
+                if ($checkStmt->rowCount() === 0) {
+                    $error = "Complaint not found.";
+                } else {
+                    $deleteStmt = $db->prepare("DELETE FROM complaints WHERE id = ?");
+                    
+                    if ($deleteStmt->execute([$complaintId])) {
+                        $success = "Complaint #$complaintId deleted successfully!";
+                    } else {
+                        $error = "Failed to delete complaint. Please try again.";
+                    }
+                }
+            } catch (Exception $e) {
+                $error = "Database error occurred while deleting complaint.";
+                error_log("Complaint delete error: " . $e->getMessage());
             }
-        } catch (Exception $e) {
-            $error = "Failed to delete complaint.";
         }
     }
 }
@@ -138,9 +177,31 @@ try {
         .btn-sm {
             padding: 0.25rem 0.5rem;
             font-size: 0.8rem;
+            margin: 0 1px;
         }
         .modal-body textarea {
             min-height: 100px;
+        }
+        .table td {
+            vertical-align: middle;
+        }
+        .actions-column {
+            min-width: 160px;
+        }
+        .complaint-subject {
+            max-width: 200px;
+            word-wrap: break-word;
+        }
+        .complaint-description {
+            max-width: 150px;
+            word-wrap: break-word;
+        }
+        #viewModal .modal-body h6 {
+            color: #495057;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 0.25rem;
         }
     </style>
 </head>
@@ -265,7 +326,7 @@ try {
                             <th>Status</th>
                             <th>Priority</th>
                             <th>Submitted</th>
-                            <th>Actions</th>
+                            <th class="actions-column">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -276,9 +337,9 @@ try {
                                 <strong><?php echo htmlspecialchars($complaint['full_name']); ?></strong><br>
                                 <small class="text-muted"><?php echo htmlspecialchars($complaint['email']); ?></small>
                             </td>
-                            <td>
+                            <td class="complaint-subject">
                                 <strong><?php echo htmlspecialchars(substr($complaint['subject'], 0, 30)); ?><?php echo strlen($complaint['subject']) > 30 ? '...' : ''; ?></strong><br>
-                                <small class="text-muted"><?php echo htmlspecialchars(substr($complaint['description'], 0, 50)); ?>...</small>
+                                <small class="text-muted complaint-description"><?php echo htmlspecialchars(substr($complaint['description'], 0, 50)); ?>...</small>
                             </td>
                             <td><?php echo htmlspecialchars($complaint['complaint_type']); ?></td>
                             <td>
@@ -310,13 +371,18 @@ try {
                                 </span>
                             </td>
                             <td><?php echo date('M d, Y', strtotime($complaint['submitted_at'])); ?></td>
-                            <td>
-                                <button class="btn btn-sm btn-primary" onclick="editComplaint(<?php echo $complaint['id']; ?>, '<?php echo $complaint['status']; ?>', '<?php echo htmlspecialchars($complaint['admin_response'], ENT_QUOTES); ?>')">
-                                    <i class="fas fa-edit"></i> Update
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteComplaint(<?php echo $complaint['id']; ?>)">
-                                    <i class="fas fa-trash"></i> Delete
-                                </button>
+                            <td class="actions-column">
+                                <div class="btn-group-vertical btn-group-sm d-grid gap-1" role="group">
+                                    <button class="btn btn-sm btn-info" onclick="viewComplaint(<?php echo $complaint['id']; ?>, '<?php echo htmlspecialchars($complaint['subject'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($complaint['description'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($complaint['complaint_type'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($complaint['priority'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($complaint['full_name'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($complaint['email'], ENT_QUOTES); ?>', '<?php echo $complaint['submitted_at']; ?>', '<?php echo htmlspecialchars($complaint['admin_response'] ?? '', ENT_QUOTES); ?>', '<?php echo $complaint['image_path'] ? htmlspecialchars($complaint['image_path'], ENT_QUOTES) : ''; ?>')">
+                                        <i class="fas fa-eye"></i> View
+                                    </button>
+                                    <button class="btn btn-sm btn-primary" onclick="editComplaint(<?php echo $complaint['id']; ?>, '<?php echo $complaint['status']; ?>', '<?php echo htmlspecialchars($complaint['admin_response'] ?? '', ENT_QUOTES); ?>')">
+                                        <i class="fas fa-edit"></i> Update
+                                    </button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteComplaint(<?php echo $complaint['id']; ?>)">
+                                        <i class="fas fa-trash"></i> Delete
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -399,6 +465,68 @@ try {
         </div>
     </div>
 
+    <!-- View Complaint Details Modal -->
+    <div class="modal fade" id="viewModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title"><i class="fas fa-eye"></i> Complaint Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-hashtag"></i> Complaint ID</h6>
+                            <p id="viewComplaintId" class="text-muted"></p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-calendar"></i> Submitted Date</h6>
+                            <p id="viewSubmittedDate" class="text-muted"></p>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-user"></i> User Details</h6>
+                            <p id="viewUserName" class="fw-bold mb-1"></p>
+                            <p id="viewUserEmail" class="text-muted"></p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-tags"></i> Type & Priority</h6>
+                            <p id="viewComplaintType" class="mb-1"></p>
+                            <p id="viewPriority"></p>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="mb-3">
+                        <h6><i class="fas fa-heading"></i> Subject</h6>
+                        <p id="viewSubject" class="fw-bold"></p>
+                    </div>
+
+                    <div class="mb-3">
+                        <h6><i class="fas fa-align-left"></i> Description</h6>
+                        <div id="viewDescription" class="border p-3 rounded bg-light" style="white-space: pre-wrap;"></div>
+                    </div>
+
+                    <div class="mb-3" id="imageSection" style="display: none;">
+                        <h6><i class="fas fa-image"></i> Attached Image</h6>
+                        <img id="viewImage" src="" alt="Complaint Image" class="img-fluid rounded border" style="max-height: 300px;">
+                    </div>
+
+                    <div class="mb-3" id="responseSection">
+                        <h6><i class="fas fa-reply"></i> Admin Response</h6>
+                        <div id="viewAdminResponse" class="border p-3 rounded bg-light" style="white-space: pre-wrap;"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
@@ -406,7 +534,7 @@ try {
         function editComplaint(id, status, response) {
             document.getElementById('updateComplaintId').value = id;
             document.getElementById('updateStatus').value = status;
-            document.getElementById('updateResponse').value = response;
+            document.getElementById('updateResponse').value = response || '';
             new bootstrap.Modal(document.getElementById('updateModal')).show();
         }
 
@@ -414,6 +542,70 @@ try {
             document.getElementById('deleteComplaintId').value = id;
             new bootstrap.Modal(document.getElementById('deleteModal')).show();
         }
+
+        function viewComplaint(id, subject, description, type, priority, userName, userEmail, submittedAt, adminResponse, imagePath) {
+            // Set basic details
+            document.getElementById('viewComplaintId').textContent = '#' + id;
+            document.getElementById('viewSubject').textContent = subject;
+            document.getElementById('viewDescription').textContent = description;
+            document.getElementById('viewComplaintType').textContent = type;
+            document.getElementById('viewUserName').textContent = userName;
+            document.getElementById('viewUserEmail').textContent = userEmail;
+            
+            // Format and set submitted date
+            const date = new Date(submittedAt);
+            document.getElementById('viewSubmittedDate').textContent = date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            
+            // Set priority with appropriate styling
+            const priorityElement = document.getElementById('viewPriority');
+            priorityElement.textContent = priority;
+            priorityElement.className = 'mb-1';
+            switch(priority) {
+                case 'Low': priorityElement.classList.add('text-success'); break;
+                case 'Medium': priorityElement.classList.add('text-warning'); break;
+                case 'High': priorityElement.classList.add('text-danger'); break;
+                case 'Critical': priorityElement.classList.add('text-danger', 'fw-bold'); break;
+            }
+            
+            // Handle admin response
+            const responseElement = document.getElementById('viewAdminResponse');
+            if (adminResponse && adminResponse.trim() !== '') {
+                responseElement.textContent = adminResponse;
+                document.getElementById('responseSection').style.display = 'block';
+            } else {
+                responseElement.textContent = 'No admin response yet.';
+                responseElement.classList.add('text-muted', 'fst-italic');
+            }
+            
+            // Handle image
+            const imageSection = document.getElementById('imageSection');
+            if (imagePath && imagePath.trim() !== '') {
+                document.getElementById('viewImage').src = '../' + imagePath;
+                imageSection.style.display = 'block';
+            } else {
+                imageSection.style.display = 'none';
+            }
+            
+            // Show modal
+            new bootstrap.Modal(document.getElementById('viewModal')).show();
+        }
+
+        // Auto-dismiss alerts after 5 seconds
+        document.addEventListener('DOMContentLoaded', function() {
+            const alerts = document.querySelectorAll('.alert');
+            alerts.forEach(function(alert) {
+                setTimeout(function() {
+                    const bsAlert = new bootstrap.Alert(alert);
+                    bsAlert.close();
+                }, 5000);
+            });
+        });
     </script>
 
 </body>
